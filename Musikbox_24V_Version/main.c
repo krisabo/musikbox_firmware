@@ -52,8 +52,7 @@ int main(void)
 	lcd_string("    WELCOME!    ");
 	lcd_setcursor(0,1);
 	lcd_string(" Kris ist super "); 
-	             
-	 
+	           
 	//ADC config
 	//reference to 3.3V VCC
 	ADMUX |= (1 << REFS0);	
@@ -68,6 +67,12 @@ int main(void)
 	f_u_chrg_ctr1_avg = f_u_chrg_ctr1_last;
 	f_i_akku0_avg	  = f_i_akku0_last;
 	f_i_akku1_avg     = f_i_akku1_last;
+	
+	//wait until ONOFF is released
+	while(ONOFF_BUTTON_IN_PORT & (1<<ONOFF_BUTTON_IN_PIN)){
+		_delay_us(10);
+	}
+	
 	
 	int k;
 	
@@ -107,63 +112,66 @@ int main(void)
 		// :( this should be an automatic generated piece of code
 		// state machine logic
 		switch(power_state_sig){
+			
 			case STATE_MAINS:
 				switch(power_state){
 					case STATE_MAINS:
-						power_state = STATE_MAINS;
 						break;
-					case STATE_AKKU;
+					case STATE_AKKU:
 						power_state_akku_ex();
 						power_state_mains_en();
-						power_state = STATE_MAINS;
 						break;
 					case STATE_EXTERNAL:						
 						power_state_ext_ex();
-						power_state_mains_en();						
-						power_state = STATE_MAINS;
-					default:
+						power_state_mains_en();		
+					default:						
+						power_state_mains_en();
 						break;
-				}				
+				}
+				power_state = STATE_MAINS;	
 				break;
+				
 			case STATE_AKKU:
 				switch(power_state){
 					case STATE_MAINS:
 						power_state_mains_ex();
 						power_state_akku_en();
-						power_state = STATE_AKKU;
 						break;
-					case STATE_AKKU;
-						power_state = STATE_AKKU;
+					case STATE_AKKU:
 						break;
 					case STATE_EXTERNAL:
 						power_state_ext_ex();
 						power_state_akku_en();
-						power_state = STATE_AKKU;
 					default:
+						power_state_akku_en();
 						break;
 				}
+				power_state = STATE_AKKU;
 				break;
+				
 			case STATE_EXTERNAL:
 				switch(power_state){
 					case STATE_MAINS:
 						power_state_mains_ex();
 						power_state_ext_en();
-						power_state = STATE_EXTERNAL;
 					break;
-					case STATE_AKKU;
+					case STATE_AKKU:
 						power_state_akku_ex();
 						power_state_ext_en();
-						power_state = STATE_EXTERNAL;
 						break;
 					case STATE_EXTERNAL:
-						power_state = STATE_EXTERNAL;
-					default:
 						break;
-					}
+					default:
+						power_state_ext_en();
+						break;
 				}
+				power_state = STATE_EXTERNAL;
+				
 			default:
 				break;
-		}
+			}
+			power_state_sig = -1;
+		
 		
 		switch(power_state){
 			case STATE_MAINS:
@@ -181,8 +189,8 @@ int main(void)
 		
 		//TODO: go to sleep?
 		_delay_ms(10);
-			
-    }
+		}
+    
 }
 
 
@@ -197,27 +205,23 @@ void power_state_akku_ex(){
 }
 
 void power_state_mains_en(){
+	//AKKU to charge
 	AKKU_RELAY_OUT_PORT |= (1 << AKKU_RELAY_OUT_PIN);
+	//always enable lcd during mains powered
+	LCD_POWER_OUT_PORT	|= (1<<LCD_POWER_OUT_PIN);
+	lcd_init();
+	lcd_clear();
 }
 void power_state_mains_du(){
-	static int j=0;
-	if(LCD_SHOW_IN_PORT & (1<<LCD_SHOW_IN_PIN)){
-		j=1000;
-		LCD_POWER_OUT_PORT |= (1 << LCD_POWER_OUT_PIN);
-		lcd_init();
-		lcd_clear();
-	}
-
-	if(j!=0){
-		j--;
-	}else{
-		j=0;
-		lcd_setcursor(0,0);
-		lcd_string("MAINS_POWERED")
-		lcd_setcursor(0,1);
-		print_number_to_lcd(f_u_24v_power_avg, 4, 2);
-		lcd_string("V");
-	}
+		
+	lcd_setcursor(0,0);
+	lcd_string("MAINS POWERED");
+	lcd_setcursor(0,1);
+	print_number_to_lcd(f_u_24v_power_avg, 4, 1);
+	lcd_string("V ");
+	print_number_to_lcd(f_u_12v_power_last, 4, 1);
+	lcd_string("V");
+	
 }
 void power_state_mains_ex(){
 	
@@ -238,33 +242,33 @@ void read_ADC(){
 		ADCSRA |= (1 << ADSC);
 	
 		//wait until EOC
-		while ((ADCSRA & (1<<ADSC)) != 0){
-			switch(cur_adc_chn){
-				case ADC_PINS_U_24_V_POWER:
-					f_u_24v_power_last = ADC*GAIN_POWER_24_U;
-					break;
-				case ADC_PINS_U_12_V_POWER:
-					f_u_24v_power_last = ADC*GAIN_POWER_12_U;
-					break;
-				case ADC_PINS_U_CHRG_CTR0:
-					f_u_chrg_ctr0_last = ADC*GAIN_CHARGE_CTR0_U;
-					break;
-				case ADC_PINS_U_CHRG_CTR1:
-					f_u_chrg_ctr1_last = ADC*GAIN_CHARGE_CTR1_U;
-					break;				
-				case ADC_PINS_I_AKKU0:
-					f_i_akku0_last = ADC * GAIN_AKKU0_I;
-					break;
-				case ADC_PINS_I_AKKU1:
-					f_i_akku1_last = ADC * GAIN_AKKU1_I;
-					break;
-				default:
-					break;
-			}
-			//next channel
-			cur_adc_chn = (cur_adc_chn+1) % ADC_NUM_OF_CHANNELS;
-			set_ADC_channel(cur_adc_chn);
-		}	
+		while ((ADCSRA & (1<<ADSC)) != 0);
+		
+		switch(cur_adc_chn){
+			case ADC_PINS_U_24_V_POWER:
+				f_u_24v_power_last = ADC*GAIN_POWER_24_U;
+				break;
+			case ADC_PINS_U_12_V_POWER:
+				f_u_12v_power_last = ADC*GAIN_POWER_12_U;
+				break;
+			case ADC_PINS_U_CHRG_CTR0:
+				f_u_chrg_ctr0_last = ADC*GAIN_CHARGE_CTR0_U;
+				break;
+			case ADC_PINS_U_CHRG_CTR1:
+				f_u_chrg_ctr1_last = ADC*GAIN_CHARGE_CTR1_U;
+				break;
+			case ADC_PINS_I_AKKU0:
+				f_i_akku0_last = ADC * GAIN_AKKU0_I;
+				break;
+			case ADC_PINS_I_AKKU1:
+				f_i_akku1_last = ADC * GAIN_AKKU1_I;
+				break;
+			default:
+				break;			
+		}				
+		//next channel
+		cur_adc_chn = (cur_adc_chn+1) % ADC_NUM_OF_CHANNELS;
+		set_ADC_channel(adc_channel_map[cur_adc_chn]);
 	}
 }
 
